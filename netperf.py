@@ -51,7 +51,7 @@ parser.add_argument('-i', '--parallel-skip',
                     type=str,
                     default=list(libnetperf.skip_actions.keys())[0],
                     choices=libnetperf.skip_actions.keys(),
-                    help='Skip mode between min and max parallel - 1=i+1; 2=i*2; 3=i+1,2,3,5,10; 4=fibonacci',
+                    help='Skip mode between min and max parallel',
 )
 
 parser.add_argument('-t', '--tests',
@@ -76,20 +76,43 @@ parser.add_argument('-o', '--port',
 
 args = parser.parse_args()
 
-print(args)
+buffer_arg = args.buffer
+buffer_last_char = buffer_arg[-1:]
+if buffer_last_char.isdigit():
+    buffer=int(buffer_arg)
+else:
+    if buffer_last_char=='K':
+        buffer=int(buffer_arg[:-1])*1024
+    elif buffer_last_char=='M':
+        buffer=int(buffer_arg[:-1])*1024*1024
+    else:
+        raise ValueError('Buffer must be in bytes, or with a K or M suffix')
 
-print(libnetperf.skip_actions[args.parallel_skip](args.min_parallel, args.parallel))
+chunk_arg = args.chunk
+chunk_last_char = chunk_arg[-1:]
+if chunk_last_char.isdigit():
+    chunk=int(chunk_arg)
+else:
+    if chunk_last_char=='K':
+        chunk=int(chunk_arg[:-1])*1024
+    elif chunk_last_char=='M':
+        chunk=int(chunk_arg[:-1])*1024*1024
+    elif chunk_last_char=='G':
+        chunk=int(chunk_arg[:-1])*1024*1024*1024
+    else:
+        raise ValueError('Chunk must be in bytes, or with a K, M or G suffix')
 
-if args.server != None:
-    # i'm a server
-    listen_address = args.server[0]
-    print("I'm a server, listening on:")
-    print(listen_address)
-    server = libnetperf.Server()
+if buffer > chunk:
+    buffer = chunk
 
-if args.client != None:
-    # i'm a client
-    connect_address = args.client[0]
-    print("I'm a client, connecting to:")
-    print(connect_address)
-    client = libnetperf.Client()
+import ipaddress
+if __name__ == '__main__':
+    if args.server != None:
+        # i'm a server - most of the smarts is in the client
+        listen_address = ipaddress.ip_network(args.server[0], strict=True)
+        server = libnetperf.Server(listen_address, args.udp, args.port)
+
+    if args.client != None:
+        # i'm a client
+        connect_address = ipaddress.ip_network(args.client[0], strict=True)
+        client = libnetperf.Client(connect_address, buffer, chunk, args.parallel, args.min_parallel, args.parallel_skip, args.tests, args.udp, args.port)

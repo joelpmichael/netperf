@@ -4,6 +4,12 @@
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
 
 # libnetperf: the heavy lifting for netperf testing
+import ipaddress
+import multiprocessing
+import asyncio
+import socket
+import uuid
+import datetime
 
 def skip_p1(min,max):
     # add 1 and return
@@ -87,27 +93,129 @@ def skip_fib(min,max):
     return range
 
 class Server():
-    pass
+    def __init__(self, listen_address, udpmode, port):
+        # start a new listener in a new process on every address
+        self.listen_address = listen_address
+        self.udpmode = udpmode
+        self.port = port
+
+        print("I'm a server, listening on:")
+        print(self.listen_address)
+        self.server_procs = []
+        for addr in ipaddress.ip_network(self.listen_address):
+            p = multiprocessing.Process(target=self._Run(addr), daemon=False)
+            p.start()
+            self.server_procs.append(p)
+    def _Run(self, addr):
+        if self.udpmode:
+            asyncio.run(self._StartUdp(addr))
+        else:
+            asyncio.run(self._StartTcp(addr))
+    async def _StartTcp(self, addr):
+        self.server = await asyncio.start_server(self._HandleTcp,host=str(addr),port=self.port)
+        async with self.server:
+            await self.server.serve_forever()
+    async def _StartUdp(self, addr):
+        pass
+    async def _HandleTcp(self, reader, writer):
+        print('Handle request from {}'.format(writer.get_extra_info('peername')))
+        hello = await reader.readline()
+        current_datetime = datetime.datetime.utcnow()
+
+        request_timestamp, request_uuid, request_command, request_buff, request_chunk = hello.decode().split()
+        request_datetime = datetime.datetime.fromisoformat(request_timestamp)
+        network_latency = current_datetime - request_datetime
+
+        print('Time delta (network latency +/- clock sync): {}'.format(network_latency))
+        if request_command not in test_actions.keys():
+            writer.write('{} {} {} {}'.format(current_datetime.isoformat(),request_uuid,'FAIL', 'Unknown request command "{}"'.format(request_command)).encode())
+            await writer.drain()
+            writer.close()
+        else:
+            test_actions[request_command][0](reader,writer,request_uuid,request_buff,request_chunk)
+            writer.close()
+    async def _HandleUdp(self, reader, writer):
+        pass
 
 class Client():
-    pass
+    def __init__(self, connect_address, buffer, chunk, parallel, min_parallel, iterator, tests, udpmode, port):
+        self.buffer = buffer
+        self.chunk = chunk
+        self.iterator = skip_actions[iterator]
+        self.tests = tests
+        self.udpmode = udpmode
+        self.port = port
 
-def test_download(mode,socket):
+        print("I'm a client, connecting to:")
+        print(connect_address)
+
+        self.client_procs = []
+
+        for test in self.tests:
+            for in_parallel in self.iterator(min_parallel, parallel):
+                running = 0
+                while running < in_parallel:
+                    for addr in ipaddress.ip_network(connect_address):
+                        running = running + 1
+                        print('running test {} parallel {} of {}'.format(test,running,in_parallel))
+                        p = multiprocessing.Process(target=self._Run(addr,test), daemon=False)
+                        p.start()
+                        self.client_procs.append(p)
+                        if running >= in_parallel:
+                            break
+
+    def _Run(self, addr, test):
+        if self.udpmode:
+            pass
+        else:
+            sock = socket.create_connection((str(addr),self.port),2)
+            test_actions[test][1](sock,self.buffer,self.chunk)
+
+
+def s_test_download(reader, writer, current_datetime, uuid, buff, chunk):
     # test downloads
     pass
 
-def test_upload(mode,socket):
+def c_test_download(sock, buff, chunk):
+    # test downloads
+    pass
+
+def s_test_upload(reader, writer, current_datetime, uuid, buff, chunk):
     # test uploads
     pass
 
-def test_bidir(mode,socket):
+def c_test_upload(sock, buff, chunk):
+    # test uploads
+    pass
+
+def s_test_bidir(reader, writer, current_datetime, uuid, buff, chunk):
     # test both ways simultaneously
     pass
 
-def test_latency(mode,socket):
-    # test latency
+def c_test_bidir(sock, buff, chunk):
+    # test both ways simultaneously
     pass
 
-test_actions = {'DOWN':test_download,'UP':test_upload,'BIDI':test_bidir,'LATENCY':test_latency}
-skip_actions = {'+1':skip_p1, 'x2':skip_x2, '+1-2-3-5-10':skip_1235, 'fibonacci':skip_fib}
+def s_test_ping(reader, writer, current_datetime, uuid, buff, chunk):
+    # test latency
+    print('pong!')
 
+def c_test_ping(sock, buff, chunk):
+    # test latency
+    print('ping!')
+    current_datetime = datetime.datetime.utcnow()
+    sock.send('{} {} {} {} {}'.format(current_datetime.isoformat(),uuid.uuid4(),'PING',0,0).encode())
+
+test_actions = {
+        'DOWN':[s_test_download,c_test_download],
+        'UP':[s_test_upload,c_test_upload],
+        'BIDI':[s_test_bidir,c_test_bidir],
+        'PING':[s_test_ping,c_test_ping],
+    }
+
+skip_actions = {
+        '+1':skip_p1,
+        'x2':skip_x2,
+        '+1-2-3-5-10':skip_1235,
+        'fibonacci':skip_fib,
+    }
