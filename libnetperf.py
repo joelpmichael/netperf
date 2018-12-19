@@ -16,7 +16,7 @@ def skip_p1(min,max):
     return list(range(min,max + 1))
 
 def skip_x2(min,max):
-    # multiply by 2 and return
+    # n^2 exponential skip
     
     if min == max:
         return [max]
@@ -118,21 +118,20 @@ class Server():
     async def _StartUdp(self, addr):
         pass
     async def _HandleTcp(self, reader, writer):
-        print('Handle request from {}'.format(writer.get_extra_info('peername')))
         hello = await reader.readline()
         current_datetime = datetime.datetime.utcnow()
 
-        request_timestamp, request_uuid, request_command, request_buff, request_chunk = hello.decode().split()
+        request_timestamp, request_uuid, request_command, request_buff, request_chunk = hello.decode().split('**')
         request_datetime = datetime.datetime.fromisoformat(request_timestamp)
-        network_latency = current_datetime - request_datetime
+        recv_network_latency = current_datetime - request_datetime
 
-        print('Time delta (network latency +/- clock sync): {}'.format(network_latency))
         if request_command not in test_actions.keys():
-            writer.write('{} {} {} {}'.format(current_datetime.isoformat(),request_uuid,'FAIL', 'Unknown request command "{}"'.format(request_command)).encode())
+            writer.write('{}**{}**{}**{}**{}\n'.format(current_datetime.isoformat(), request_uuid, 'ERROR', 'FAIL', 'Unknown request command "{}"'.format(request_command)).encode())
             await writer.drain()
             writer.close()
         else:
-            test_actions[request_command][0](reader,writer,request_uuid,request_buff,request_chunk)
+            test_actions[request_command][0](reader,writer,current_datetime,request_uuid,request_buff,request_chunk)
+            await writer.drain()
             writer.close()
     async def _HandleUdp(self, reader, writer):
         pass
@@ -146,9 +145,6 @@ class Client():
         self.udpmode = udpmode
         self.port = port
 
-        print("I'm a client, connecting to:")
-        print(connect_address)
-
         self.client_procs = []
 
         for test in self.tests:
@@ -157,19 +153,22 @@ class Client():
                 while running < in_parallel:
                     for addr in ipaddress.ip_network(connect_address):
                         running = running + 1
-                        print('running test {} parallel {} of {}'.format(test,running,in_parallel))
-                        p = multiprocessing.Process(target=self._Run(addr,test), daemon=False)
+                        p = multiprocessing.Process(target=self._Run(addr,test), daemon=True)
                         p.start()
                         self.client_procs.append(p)
                         if running >= in_parallel:
                             break
+                for job in self.client_procs:
+                    job.join()
+                self.client_procs = []
 
     def _Run(self, addr, test):
         if self.udpmode:
             pass
         else:
-            sock = socket.create_connection((str(addr),self.port),2)
+            sock = socket.create_connection((str(addr),self.port),10)
             test_actions[test][1](sock,self.buffer,self.chunk)
+            sock.close()
 
 
 def s_test_download(reader, writer, current_datetime, uuid, buff, chunk):
@@ -198,13 +197,19 @@ def c_test_bidir(sock, buff, chunk):
 
 def s_test_ping(reader, writer, current_datetime, uuid, buff, chunk):
     # test latency
-    print('pong!')
+    writer.write('{}**{}**{}**{}**{}\n'.format(current_datetime.isoformat(),uuid,'PING','OK', 'Ping reply').encode())
 
 def c_test_ping(sock, buff, chunk):
     # test latency
-    print('ping!')
-    current_datetime = datetime.datetime.utcnow()
-    sock.send('{} {} {} {} {}'.format(current_datetime.isoformat(),uuid.uuid4(),'PING',0,0).encode())
+    send_datetime = datetime.datetime.utcnow()
+    sock.sendall('{}**{}**{}**{}**{}\n'.format(send_datetime.isoformat(),uuid.uuid4(),'PING',0,0).encode())
+    data = sock.recv(buff)
+    recv_datetime = datetime.datetime.utcnow()
+    latency = recv_datetime - send_datetime
+    print('Send time: {}'.format(send_datetime.isoformat()))
+    print('Recv time: {}'.format(recv_datetime.isoformat()))
+    print('Time delta (network latency +/- clock sync): {}'.format(latency))
+    response_timestamp, request_uuid, request_command, request_status, status_info = data.decode().split('**')
 
 test_actions = {
         'DOWN':[s_test_download,c_test_download],
