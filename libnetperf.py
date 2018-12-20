@@ -205,11 +205,18 @@ def c_test_ping(sock, buff, chunk):
     sock.sendall('{}**{}**{}**{}**{}\n'.format(send_datetime.isoformat(),uuid.uuid4(),'PING',0,0).encode())
     data = sock.recv(buff)
     recv_datetime = datetime.datetime.utcnow()
-    latency = recv_datetime - send_datetime
-    print('Send time: {}'.format(send_datetime.isoformat()))
-    print('Recv time: {}'.format(recv_datetime.isoformat()))
-    print('Time delta (network latency +/- clock sync): {}'.format(latency))
+
     response_timestamp, request_uuid, request_command, request_status, status_info = data.decode().split('**')
+    srv_datetime = datetime.datetime.fromisoformat(response_timestamp)
+    print('Send time: {}'.format(send_datetime.isoformat()))
+    print('Serv time: {}'.format(srv_datetime.isoformat()))
+    print('Recv time: {}'.format(recv_datetime.isoformat()))
+
+    srv_client_latency = srv_datetime - send_datetime
+    client_client_rtt = recv_datetime - send_datetime
+
+    print('Server-Client Latency: {}'.format(srv_client_latency))
+    print('Client-Client RTT: {}'.format(client_client_rtt))
 
 test_actions = {
         'DOWN':[s_test_download,c_test_download],
