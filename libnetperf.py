@@ -101,11 +101,14 @@ class Server():
 
         print("I'm a server, listening on:")
         print(self.listen_address)
-        self.server_procs = []
+        server_procs = []
         for addr in ipaddress.ip_network(self.listen_address):
-            p = multiprocessing.Process(target=self._Run(addr), daemon=False)
+            p = multiprocessing.Process(target=self._Run, args=(addr,), daemon=False)
             p.start()
-            self.server_procs.append(p)
+            server_procs.append(p)
+        for job in server_procs:
+            job.join()
+
     def _Run(self, addr):
         if self.udpmode:
             asyncio.run(self._StartUdp(addr))
@@ -118,6 +121,7 @@ class Server():
     async def _StartUdp(self, addr):
         pass
     async def _HandleTcp(self, reader, writer):
+        print("Client connected from {}".format(writer.get_extra_info('peername')))
         hello = await reader.readline()
         current_datetime = datetime.datetime.utcnow()
 
@@ -144,23 +148,24 @@ class Client():
         self.udpmode = udpmode
         self.port = port
 
-        self.client_procs = []
+        client_procs = []
 
         for test in self.tests:
             for in_parallel in self.iterator(min_parallel, parallel):
-                print("Running parallel {} of test {}".format(in_parallel, test))
+                print("Running test {}".format(test))
                 running = 0
                 while running < in_parallel:
                     for addr in ipaddress.ip_network(connect_address):
                         running = running + 1
-                        p = multiprocessing.Process(target=self._Run(addr,test), daemon=True)
+                        print("Starting parallel connection {} of {}".format(running, in_parallel))
+                        p = multiprocessing.Process(target=self._Run, args=(addr,test), daemon=True)
                         p.start()
-                        self.client_procs.append(p)
+                        client_procs.append(p)
                         if running >= in_parallel:
                             break
-                for job in self.client_procs:
+                for job in client_procs:
                     job.join()
-                self.client_procs = []
+                client_procs = []
 
     def _Run(self, addr, test):
         if self.udpmode:
@@ -215,15 +220,46 @@ def c_test_download(sock, buff, chunk):
 
     print('Xfer rate: {}{}bit/sec'.format(xfer_rate,xr_prefix))
 
-def s_test_upload(reader, writer, current_datetime, uuid, buff, chunk):
+async def s_test_upload(reader, writer, current_datetime, uuid, buff, chunk):
     # test uploads
-    pass
+    chunk_pos = 0
+    while chunk_pos < chunk:
+        data = await reader.read(buff)
+        chunk_pos += len(data)
 
 def c_test_upload(sock, buff, chunk):
     # test uploads
-    pass
+    content = rand_buffer(buff)
+    send_datetime = datetime.datetime.utcnow()
+    sock.sendall('{}**{}**{}**{}**{}\n'.format(send_datetime.isoformat(),uuid.uuid4(),'UP',buff,chunk).encode())
+    chunk_pos = 0
+    while chunk_pos < chunk:
+        sock.sendall(content.encode())
+        chunk_pos += buff
+    recv_datetime = datetime.datetime.utcnow()
+    elapsed_time = recv_datetime - send_datetime
+    elapsed_seconds = (elapsed_time.days * 24 * 3600) + (elapsed_time.seconds) + (elapsed_time.microseconds / 1000000)
+    print('Send time: {}'.format(send_datetime.isoformat()))
+    print('Recv time: {}'.format(recv_datetime.isoformat()))
+    print('Xfer time: {}'.format(elapsed_seconds))
+    print('Xfer size: {}'.format(chunk_pos))
 
-def s_test_bidir(reader, writer, current_datetime, uuid, buff, chunk):
+    xfer_rate_bit_sec = (chunk_pos * 8) / elapsed_seconds
+    xr_prefix = ''
+    xfer_rate = xfer_rate_bit_sec
+    if xfer_rate_bit_sec > 1000000000:
+        xr_prefix = 'G'
+        xfer_rate = xfer_rate_bit_sec / 1000000000
+    elif xfer_rate_bit_sec > 1000000:
+        xr_prefix = 'G'
+        xfer_rate = xfer_rate_bit_sec / 1000000
+    elif xfer_rate_bit_sec > 1000:
+        xr_prefix = 'G'
+        xfer_rate = xfer_rate_bit_sec / 1000
+
+    print('Xfer rate: {}{}bit/sec'.format(xfer_rate,xr_prefix))
+
+async def s_test_bidir(reader, writer, current_datetime, uuid, buff, chunk):
     # test both ways simultaneously
     pass
 
