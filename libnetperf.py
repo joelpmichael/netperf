@@ -130,8 +130,7 @@ class Server():
             await writer.drain()
             writer.close()
         else:
-            test_actions[request_command][0](reader,writer,current_datetime,request_uuid,request_buff,request_chunk)
-            await writer.drain()
+            await test_actions[request_command][0](reader,writer,current_datetime,request_uuid,int(request_buff),int(request_chunk))
             writer.close()
     async def _HandleUdp(self, reader, writer):
         pass
@@ -149,6 +148,7 @@ class Client():
 
         for test in self.tests:
             for in_parallel in self.iterator(min_parallel, parallel):
+                print("Running parallel {} of test {}".format(in_parallel, test))
                 running = 0
                 while running < in_parallel:
                     for addr in ipaddress.ip_network(connect_address):
@@ -170,14 +170,50 @@ class Client():
             test_actions[test][1](sock,self.buffer,self.chunk)
             sock.close()
 
+def rand_buffer(len):
+    import random, string
+    x = ''.join(random.choices(string.ascii_letters + string.digits, k=len))
+    return x
 
-def s_test_download(reader, writer, current_datetime, uuid, buff, chunk):
+async def s_test_download(reader, writer, current_datetime, uuid, buff, chunk):
     # test downloads
-    pass
+    content = rand_buffer(buff)
+    chunk_pos = 0
+    while chunk_pos < chunk:
+        writer.write(content.encode())
+        await writer.drain()
+        chunk_pos += buff
 
 def c_test_download(sock, buff, chunk):
     # test downloads
-    pass
+    send_datetime = datetime.datetime.utcnow()
+    sock.sendall('{}**{}**{}**{}**{}\n'.format(send_datetime.isoformat(),uuid.uuid4(),'DOWN',buff,chunk).encode())
+    chunk_pos = 0
+    while chunk_pos < chunk:
+        data = sock.recv(buff)
+        chunk_pos += len(data)
+    recv_datetime = datetime.datetime.utcnow()
+    elapsed_time = recv_datetime - send_datetime
+    elapsed_seconds = (elapsed_time.days * 24 * 3600) + (elapsed_time.seconds) + (elapsed_time.microseconds / 1000000)
+    print('Send time: {}'.format(send_datetime.isoformat()))
+    print('Recv time: {}'.format(recv_datetime.isoformat()))
+    print('Xfer time: {}'.format(elapsed_seconds))
+    print('Xfer size: {}'.format(chunk_pos))
+
+    xfer_rate_bit_sec = (chunk_pos * 8) / elapsed_seconds
+    xr_prefix = ''
+    xfer_rate = xfer_rate_bit_sec
+    if xfer_rate_bit_sec > 1000000000:
+        xr_prefix = 'G'
+        xfer_rate = xfer_rate_bit_sec / 1000000000
+    elif xfer_rate_bit_sec > 1000000:
+        xr_prefix = 'G'
+        xfer_rate = xfer_rate_bit_sec / 1000000
+    elif xfer_rate_bit_sec > 1000:
+        xr_prefix = 'G'
+        xfer_rate = xfer_rate_bit_sec / 1000
+
+    print('Xfer rate: {}{}bit/sec'.format(xfer_rate,xr_prefix))
 
 def s_test_upload(reader, writer, current_datetime, uuid, buff, chunk):
     # test uploads
@@ -195,9 +231,10 @@ def c_test_bidir(sock, buff, chunk):
     # test both ways simultaneously
     pass
 
-def s_test_ping(reader, writer, current_datetime, uuid, buff, chunk):
+async def s_test_ping(reader, writer, current_datetime, uuid, buff, chunk):
     # test latency
     writer.write('{}**{}**{}**{}**{}\n'.format(current_datetime.isoformat(),uuid,'PING','OK', 'Ping reply').encode())
+    await writer.drain()
 
 def c_test_ping(sock, buff, chunk):
     # test latency
