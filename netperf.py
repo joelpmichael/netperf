@@ -56,7 +56,7 @@ parser.add_argument('-i', '--parallel-skip',
 
 parser.add_argument('-t', '--tests',
                     type=str,
-                    default=libnetperf.test_actions.keys(),
+                    default=list(libnetperf.test_actions.keys()),
                     nargs='*',
                     choices=libnetperf.test_actions.keys(),
                     help='Which tests to run',

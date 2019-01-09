@@ -251,11 +251,25 @@ def c_test_upload(sock, buff, chunk):
 
 async def s_test_bidir(reader, writer, current_datetime, uuid, buff, chunk):
     # test both ways simultaneously
-    pass
+    content = rand_buffer(buff)
+    chunk_pos = 0
+    while chunk_pos < chunk:
+        writer.write(content.encode())
+        await writer.drain()
+        data = await reader.read(buff)
+        chunk_pos += len(data)
 
 def c_test_bidir(sock, buff, chunk):
     # test both ways simultaneously
-    pass
+    send_datetime = datetime.datetime.utcnow()
+    sock.sendall('{}**{}**{}**{}**{}\n'.format(send_datetime.isoformat(),uuid.uuid4(),'BIDI',buff,chunk).encode())
+    chunk_pos = 0
+    while chunk_pos < chunk:
+        data = sock.recv(buff)
+        sock.sendall(data)
+        chunk_pos += len(data)
+    recv_datetime = datetime.datetime.utcnow()
+    return send_datetime, recv_datetime, chunk_pos * 2
 
 async def s_test_ping(reader, writer, current_datetime, uuid, buff, chunk):
     # test latency
