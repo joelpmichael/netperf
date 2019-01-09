@@ -152,13 +152,13 @@ class Client():
 
         for test in self.tests:
             for in_parallel in self.iterator(min_parallel, parallel):
-                print("Running test {}".format(test))
+                run_uuid = uuid.uuid4()
                 running = 0
                 while running < in_parallel:
                     for addr in ipaddress.ip_network(connect_address):
                         running = running + 1
                         print("Starting parallel connection {} of {}".format(running, in_parallel))
-                        p = multiprocessing.Process(target=self._Run, args=(addr,test), daemon=True)
+                        p = multiprocessing.Process(target=self._Run, args=(addr,test,run_uuid), daemon=True)
                         p.start()
                         client_procs.append(p)
                         if running >= in_parallel:
@@ -167,13 +167,43 @@ class Client():
                     job.join()
                 client_procs = []
 
-    def _Run(self, addr, test):
+    def _Run(self, addr, test, run_uuid):
         if self.udpmode:
             pass
         else:
-            sock = socket.create_connection((str(addr),self.port),10)
-            test_actions[test][1](sock,self.buffer,self.chunk)
-            sock.close()
+            try:
+                sock = socket.create_connection((str(addr),self.port),120)
+                send_datetime, recv_datetime, xfer_bytes = test_actions[test][1](sock,self.buffer,self.chunk)
+                sock.close()
+
+                elapsed_time = recv_datetime - send_datetime
+                elapsed_seconds = (elapsed_time.days * 24 * 3600) + (elapsed_time.seconds) + (elapsed_time.microseconds / 1000000)
+                print('Send time: {}'.format(send_datetime.isoformat()))
+                print('Recv time: {}'.format(recv_datetime.isoformat()))
+                print('Xfer time: {}'.format(elapsed_seconds))
+                print('Xfer size: {}'.format(xfer_bytes))
+
+                if xfer_bytes > 0 and elapsed_seconds > 0:
+                    xfer_rate_bit_sec = (xfer_bytes * 8) / elapsed_seconds
+                    xr_prefix = ''
+                    xfer_rate = xfer_rate_bit_sec
+                    if xfer_rate_bit_sec > 1000000000:
+                        xr_prefix = 'G'
+                        xfer_rate = xfer_rate_bit_sec / 1000000000
+                    elif xfer_rate_bit_sec > 1000000:
+                        xr_prefix = 'M'
+                        xfer_rate = xfer_rate_bit_sec / 1000000
+                    elif xfer_rate_bit_sec > 1000:
+                        xr_prefix = 'K'
+                        xfer_rate = xfer_rate_bit_sec / 1000
+
+                    print('Xfer rate: {}{}bit/sec'.format(xfer_rate,xr_prefix))
+
+                print('{},{},{},{},{}'.format(test,run_uuid,send_datetime.isoformat(),recv_datetime.isoformat(),xfer_bytes))
+
+            except socket.error as e:
+                print("Caught exception socket.error: {}".format(e))
+                print('{},{},{},{},{}'.format(test,run_uuid,datetime.datetime.min.isoformat(),datetime.datetime.max.isoformat(),0))
 
 def rand_buffer(len):
     import random, string
@@ -198,27 +228,7 @@ def c_test_download(sock, buff, chunk):
         data = sock.recv(buff)
         chunk_pos += len(data)
     recv_datetime = datetime.datetime.utcnow()
-    elapsed_time = recv_datetime - send_datetime
-    elapsed_seconds = (elapsed_time.days * 24 * 3600) + (elapsed_time.seconds) + (elapsed_time.microseconds / 1000000)
-    print('Send time: {}'.format(send_datetime.isoformat()))
-    print('Recv time: {}'.format(recv_datetime.isoformat()))
-    print('Xfer time: {}'.format(elapsed_seconds))
-    print('Xfer size: {}'.format(chunk_pos))
-
-    xfer_rate_bit_sec = (chunk_pos * 8) / elapsed_seconds
-    xr_prefix = ''
-    xfer_rate = xfer_rate_bit_sec
-    if xfer_rate_bit_sec > 1000000000:
-        xr_prefix = 'G'
-        xfer_rate = xfer_rate_bit_sec / 1000000000
-    elif xfer_rate_bit_sec > 1000000:
-        xr_prefix = 'G'
-        xfer_rate = xfer_rate_bit_sec / 1000000
-    elif xfer_rate_bit_sec > 1000:
-        xr_prefix = 'G'
-        xfer_rate = xfer_rate_bit_sec / 1000
-
-    print('Xfer rate: {}{}bit/sec'.format(xfer_rate,xr_prefix))
+    return send_datetime, recv_datetime, chunk_pos
 
 async def s_test_upload(reader, writer, current_datetime, uuid, buff, chunk):
     # test uploads
@@ -237,27 +247,7 @@ def c_test_upload(sock, buff, chunk):
         sock.sendall(content.encode())
         chunk_pos += buff
     recv_datetime = datetime.datetime.utcnow()
-    elapsed_time = recv_datetime - send_datetime
-    elapsed_seconds = (elapsed_time.days * 24 * 3600) + (elapsed_time.seconds) + (elapsed_time.microseconds / 1000000)
-    print('Send time: {}'.format(send_datetime.isoformat()))
-    print('Recv time: {}'.format(recv_datetime.isoformat()))
-    print('Xfer time: {}'.format(elapsed_seconds))
-    print('Xfer size: {}'.format(chunk_pos))
-
-    xfer_rate_bit_sec = (chunk_pos * 8) / elapsed_seconds
-    xr_prefix = ''
-    xfer_rate = xfer_rate_bit_sec
-    if xfer_rate_bit_sec > 1000000000:
-        xr_prefix = 'G'
-        xfer_rate = xfer_rate_bit_sec / 1000000000
-    elif xfer_rate_bit_sec > 1000000:
-        xr_prefix = 'G'
-        xfer_rate = xfer_rate_bit_sec / 1000000
-    elif xfer_rate_bit_sec > 1000:
-        xr_prefix = 'G'
-        xfer_rate = xfer_rate_bit_sec / 1000
-
-    print('Xfer rate: {}{}bit/sec'.format(xfer_rate,xr_prefix))
+    return send_datetime, recv_datetime, chunk_pos
 
 async def s_test_bidir(reader, writer, current_datetime, uuid, buff, chunk):
     # test both ways simultaneously
@@ -290,6 +280,8 @@ def c_test_ping(sock, buff, chunk):
 
     print('Server-Client Latency: {}'.format(srv_client_latency))
     print('Client-Client RTT: {}'.format(client_client_rtt))
+
+    return send_datetime, recv_datetime, 0
 
 test_actions = {
         'DOWN':[s_test_download,c_test_download],
