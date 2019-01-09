@@ -115,7 +115,7 @@ class Server():
         else:
             asyncio.run(self._StartTcp(addr))
     async def _StartTcp(self, addr):
-        self.server = await asyncio.start_server(self._HandleTcp,host=str(addr),port=self.port)
+        self.server = await asyncio.start_server(self._HandleTcp,host=str(addr),port=self.port,backlog=32768)
         async with self.server:
             await self.server.serve_forever()
     async def _StartUdp(self, addr):
@@ -173,6 +173,7 @@ class Client():
         else:
             try:
                 sock = socket.create_connection((str(addr),self.port),120)
+                sock.settimeout(None)
                 send_datetime, recv_datetime, xfer_bytes = test_actions[test][1](sock,self.buffer,self.chunk)
                 sock.close()
 
